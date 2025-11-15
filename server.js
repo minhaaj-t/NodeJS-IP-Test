@@ -46,8 +46,9 @@ function getUserAgentInfo(req) {
 
 // Serve static HTML page
 app.get('/', (req, res) => {
-  // Get server device name - always available
-  const serverDeviceName = os.hostname() || 'Unknown Server';
+  // Get server device name - check environment variable first, then fallback to hostname
+  // This allows setting a custom device name (e.g., your local computer name) for live website
+  const serverDeviceName = process.env.DEVICE_NAME || os.hostname() || 'Unknown Server';
   const serverLanIP = getLocalIPAddress();
   
   const serverInfo = {
@@ -196,7 +197,7 @@ app.get('/', (req, res) => {
             </div>
             <div class="note" style="margin-top: 15px;">
                 <strong>ℹ️ Note:</strong> This is the server's device name. 
-                ${serverInfo.deviceName ? 'On local: your computer name. On live: server hostname.' : 'Device name detected automatically.'}
+                ${process.env.DEVICE_NAME ? 'Custom device name from environment variable.' : 'On local: your computer name. On live: set DEVICE_NAME in Vercel to show your local device name.'}
             </div>
         </div>
 
