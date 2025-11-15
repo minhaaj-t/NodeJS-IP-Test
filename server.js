@@ -46,9 +46,13 @@ function getUserAgentInfo(req) {
 
 // Serve static HTML page
 app.get('/', (req, res) => {
+  // Get server device name - always available
+  const serverDeviceName = os.hostname() || 'Unknown Server';
+  const serverLanIP = getLocalIPAddress();
+  
   const serverInfo = {
-    deviceName: os.hostname(),
-    lanIP: getLocalIPAddress(),
+    deviceName: serverDeviceName,
+    lanIP: serverLanIP,
     platform: os.platform(),
     arch: os.arch(),
     networkInterfaces: os.networkInterfaces()
@@ -176,7 +180,7 @@ app.get('/', (req, res) => {
             <h2>Server Information</h2>
             <div class="info-item">
                 <span class="label">Device Name:</span>
-                <span class="value">${serverInfo.deviceName}</span>
+                <span class="value" style="color: #28a745; font-weight: 600;">${serverInfo.deviceName || 'Unknown'}</span>
             </div>
             <div class="info-item">
                 <span class="label">LAN IP Address:</span>
@@ -189,6 +193,10 @@ app.get('/', (req, res) => {
             <div class="info-item">
                 <span class="label">Architecture:</span>
                 <span class="value">${serverInfo.arch}</span>
+            </div>
+            <div class="note" style="margin-top: 15px;">
+                <strong>ℹ️ Note:</strong> This is the server's device name. 
+                ${serverInfo.deviceName ? 'On local: your computer name. On live: server hostname.' : 'Device name detected automatically.'}
             </div>
         </div>
 
@@ -303,10 +311,13 @@ app.get('/', (req, res) => {
                 
                 deviceInfo.deviceName = deviceName;
                 
-                // Log for debugging (only in development)
-                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                    console.log('Device detected:', deviceInfo);
-                }
+                // Log for debugging
+                console.log('🔍 Device Detection:', {
+                    deviceName: deviceInfo.deviceName,
+                    platform: deviceInfo.platform,
+                    browser: deviceInfo.browser,
+                    screen: deviceInfo.screen
+                });
                 
                 // Update display with synchronous data immediately
                 updateDisplay();
