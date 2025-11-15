@@ -585,14 +585,15 @@ app.get('/', (req, res) => {
         }
 
         // Function to fetch data from local server (for live website)
-        async function fetchLocalServerData() {
+        async function fetchLocalServerData(retryCount = 0) {
             const localServerUrl = '${serverInfo.localServerUrl || "http://192.168.61.55:3000"}';
             const isLocalServer = ${serverInfo.isLocalServer ? 'true' : 'false'};
+            const maxRetries = 3;
             
             // Only try to connect if we're on the live server
             if (!isLocalServer) {
                 const statusEl = document.getElementById('localServerStatusText');
-                if (statusEl) {
+                if (statusEl && retryCount === 0) {
                     statusEl.innerHTML = 'Connecting to local server...';
                 }
                 
@@ -606,7 +607,8 @@ app.get('/', (req, res) => {
                         headers: {
                             'Content-Type': 'application/json'
                         },
-                        signal: controller.signal
+                        signal: controller.signal,
+                        cache: 'no-cache'
                     });
                     
                     clearTimeout(timeoutId);
@@ -614,31 +616,72 @@ app.get('/', (req, res) => {
                     if (response.ok) {
                         const localData = await response.json();
                         
-                        // Update server device name with local server data
-                        const serverDeviceNameEl = document.querySelector('.section:first-of-type .info-item:first-of-type .value');
-                        if (serverDeviceNameEl && localData.deviceName) {
-                            serverDeviceNameEl.innerHTML = '<span style="color: #28a745; font-weight: 600;">' + escapeHtml(localData.deviceName) + '</span> <span style="color: #666; font-size: 0.9em;">(from local server)</span>';
-                        }
-                        
-                        // Update server LAN IP
-                        const serverLanIPEl = document.querySelector('.section:first-of-type .info-item:nth-of-type(2) .value');
-                        if (serverLanIPEl && localData.lanIP) {
-                            serverLanIPEl.innerHTML = escapeHtml(localData.lanIP) + ' <span style="color: #666; font-size: 0.9em;">(from local server)</span>';
+                        // Update ALL server information fields with local server data
+                        const serverSection = document.querySelector('.section:first-of-type');
+                        if (serverSection) {
+                            // Update Device Name
+                            const serverDeviceNameEl = serverSection.querySelector('.info-item:nth-of-type(1) .value');
+                            if (serverDeviceNameEl && localData.deviceName) {
+                                serverDeviceNameEl.innerHTML = '<span style="color: #28a745; font-weight: 600;">' + escapeHtml(localData.deviceName) + '</span> <span style="color: #666; font-size: 0.85em;">(from local)</span>';
+                            }
+                            
+                            // Update LAN IP Address
+                            const serverLanIPEl = serverSection.querySelector('.info-item:nth-of-type(2) .value');
+                            if (serverLanIPEl && localData.lanIP) {
+                                serverLanIPEl.innerHTML = '<span style="color: #28a745;">' + escapeHtml(localData.lanIP) + '</span> <span style="color: #666; font-size: 0.85em;">(from local)</span>';
+                            }
+                            
+                            // Update Platform
+                            const serverPlatformEl = serverSection.querySelector('.info-item:nth-of-type(3) .value');
+                            if (serverPlatformEl && localData.platform) {
+                                serverPlatformEl.innerHTML = '<span style="color: #28a745;">' + escapeHtml(localData.platform) + '</span> <span style="color: #666; font-size: 0.85em;">(from local)</span>';
+                            }
+                            
+                            // Update Architecture
+                            const serverArchEl = serverSection.querySelector('.info-item:nth-of-type(4) .value');
+                            if (serverArchEl && localData.arch) {
+                                serverArchEl.innerHTML = '<span style="color: #28a745;">' + escapeHtml(localData.arch) + '</span> <span style="color: #666; font-size: 0.85em;">(from local)</span>';
+                            }
                         }
                         
                         if (statusEl) {
-                            statusEl.innerHTML = '<span style="color: #28a745;">✓ Connected to local server</span>';
+                            statusEl.innerHTML = '<span style="color: #28a745; font-weight: 600;">✓ Connected - Displaying local server data</span>';
                         }
+                        
+                        console.log('✅ Local server data loaded:', localData);
                     } else {
                         throw new Error('Failed to fetch');
                     }
                 } catch (error) {
                     console.log('Local server connection failed:', error);
                     const statusEl = document.getElementById('localServerStatusText');
-                    if (statusEl) {
-                        statusEl.innerHTML = '<span style="color: #dc3545;">✗ Cannot connect to local server. Make sure it\'s running at ' + localServerUrl + '</span>';
+                    
+                    // Retry logic
+                    if (retryCount < maxRetries) {
+                        if (statusEl) {
+                            statusEl.innerHTML = '<span style="color: #ff9800;">Retrying connection... (' + (retryCount + 1) + '/' + maxRetries + ')</span>';
+                        }
+                        // Retry after 2 seconds
+                        setTimeout(() => {
+                            fetchLocalServerData(retryCount + 1);
+                        }, 2000);
+                    } else {
+                        // Max retries reached
+                        if (statusEl) {
+                            statusEl.innerHTML = '<span style="color: #dc3545;">✗ Cannot connect to local server at ' + localServerUrl + '. Make sure:<br>1. Local server is running (npm start)<br>2. Tunnel is active (ngrok/localtunnel)<br>3. LOCAL_SERVER_URL is set in Vercel</span>';
+                        }
                     }
                 }
+            }
+        }
+        
+        // Periodically refresh local server data (every 30 seconds)
+        function startLocalServerPolling() {
+            const isLocalServer = ${serverInfo.isLocalServer ? 'true' : 'false'};
+            if (!isLocalServer) {
+                setInterval(() => {
+                    fetchLocalServerData();
+                }, 30000); // Refresh every 30 seconds
             }
         }
         
@@ -648,12 +691,14 @@ app.get('/', (req, res) => {
             if (document.readyState === 'complete' || document.readyState === 'interactive') {
                 getDeviceInfo();
                 fetchLocalServerData();
+                startLocalServerPolling();
             } 
             // Wait for DOM to be ready
             else if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => {
                     getDeviceInfo();
                     fetchLocalServerData();
+                    startLocalServerPolling();
                 }, { once: true });
             }
             // Fallback: wait for window load
@@ -663,6 +708,7 @@ app.get('/', (req, res) => {
                     getDeviceInfo();
                 }
                 fetchLocalServerData();
+                startLocalServerPolling();
             }, { once: true });
         })();
     </script>
