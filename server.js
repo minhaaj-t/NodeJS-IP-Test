@@ -228,67 +228,79 @@ app.get('/', (req, res) => {
     </div>
 
     <script>
+        // Global info object to track all detected information
+        let deviceInfo = {
+            deviceName: null,
+            localIP: null,
+            platform: null,
+            browser: null,
+            screen: null
+        };
+
         // Get device information using browser APIs
         function getDeviceInfo() {
-            const info = {
-                deviceName: null,
-                localIP: null,
-                platform: navigator.platform || 'Unknown',
-                browser: getBrowserInfo(),
-                screen: screen.width + 'x' + screen.height,
-                language: navigator.language,
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                cpuCores: navigator.hardwareConcurrency || 'Unknown',
-                memory: navigator.deviceMemory ? navigator.deviceMemory + ' GB' : 'Unknown'
-            };
-
-            // Try to infer device name from available information
-            let deviceName = null;
-            
-            // Check if we can get more specific device info
-            const ua = navigator.userAgent;
-            const platform = navigator.platform || '';
-            
-            // Try to extract device model from user agent (for mobile devices)
-            const mobileMatch = ua.match(/(iPhone|iPad|iPod|Android|Windows Phone|BlackBerry)/i);
-            const modelMatch = ua.match(/(iPhone|iPad|iPod|Android|Windows Phone|BlackBerry)[^;]*/i);
-            
-            if (modelMatch) {
-                deviceName = modelMatch[0].trim();
-            } else if (platform) {
-                // For desktop, use platform as device identifier
-                // Combine with other info for uniqueness
-                const cores = navigator.hardwareConcurrency || '';
-                const mem = navigator.deviceMemory || '';
-                deviceName = platform + (cores ? ' (' + cores + ' cores)' : '');
-            } else {
-                deviceName = 'Unknown Device';
-            }
-            
-            info.deviceName = deviceName;
-            
-            // Display device name immediately (before async operations)
-            updateDisplay(info);
-
-            // Try to get local IP using WebRTC
-            getLocalIPAddress().then(ip => {
-                info.localIP = ip;
-                updateDisplay(info);
-            }).catch(() => {
-                info.localIP = 'Not available (WebRTC blocked or not supported)';
-                updateDisplay(info);
-            });
-
-            // Try to get hostname from WebRTC or other methods
-            tryGetHostname().then(hostname => {
-                if (hostname) {
-                    // If we got a real hostname, use it
-                    info.deviceName = hostname;
-                    updateDisplay(info);
+            try {
+                // Get synchronous information immediately
+                const ua = navigator.userAgent || '';
+                const platform = navigator.platform || 'Unknown';
+                const cores = navigator.hardwareConcurrency || 0;
+                
+                // Set platform immediately
+                deviceInfo.platform = platform;
+                
+                // Set browser immediately
+                deviceInfo.browser = getBrowserInfo();
+                
+                // Set screen resolution immediately
+                deviceInfo.screen = (screen.width || 0) + 'x' + (screen.height || 0);
+                
+                // Try to infer device name from available information
+                let deviceName = null;
+                
+                // Try to extract device model from user agent (for mobile devices)
+                const mobileMatch = ua.match(/(iPhone|iPad|iPod|Android|Windows Phone|BlackBerry)/i);
+                const modelMatch = ua.match(/(iPhone|iPad|iPod|Android|Windows Phone|BlackBerry)[^;]*/i);
+                
+                if (modelMatch) {
+                    deviceName = modelMatch[0].trim();
+                } else if (platform) {
+                    // For desktop, use platform as device identifier
+                    deviceName = platform + (cores ? ' (' + cores + ' cores)' : '');
+                } else {
+                    deviceName = 'Unknown Device';
                 }
-            });
+                
+                deviceInfo.deviceName = deviceName;
+                
+                // Update display with synchronous data immediately
+                updateDisplay();
+                
+                // Try to get local IP using WebRTC (async)
+                getLocalIPAddress().then(ip => {
+                    deviceInfo.localIP = ip;
+                    updateDisplay();
+                }).catch((err) => {
+                    console.log('Local IP detection failed:', err);
+                    deviceInfo.localIP = 'Not available (WebRTC blocked or not supported)';
+                    updateDisplay();
+                });
 
-            return info;
+                // Try to get hostname from WebRTC or other methods (async)
+                tryGetHostname().then(hostname => {
+                    if (hostname) {
+                        // If we got a real hostname, use it
+                        deviceInfo.deviceName = hostname;
+                        updateDisplay();
+                    }
+                }).catch((err) => {
+                    console.log('Hostname detection failed:', err);
+                });
+                
+            } catch (error) {
+                console.error('Error getting device info:', error);
+                // Still try to update with whatever we have
+                updateDisplay();
+            }
         }
 
         // Get browser information
@@ -409,46 +421,89 @@ app.get('/', (req, res) => {
         }
 
         // Update the display with detected information
-        function updateDisplay(info) {
-            const deviceNameEl = document.getElementById('deviceName');
-            const localIPEl = document.getElementById('localIP');
-            const platformEl = document.getElementById('platform');
-            const browserEl = document.getElementById('browser');
-            const screenEl = document.getElementById('screen');
+        function updateDisplay() {
+            try {
+                const deviceNameEl = document.getElementById('deviceName');
+                const localIPEl = document.getElementById('localIP');
+                const platformEl = document.getElementById('platform');
+                const browserEl = document.getElementById('browser');
+                const screenEl = document.getElementById('screen');
 
-            // Always update device name if available
-            if (info.deviceName) {
-                deviceNameEl.innerHTML = '<span class="detected">' + escapeHtml(info.deviceName) + '</span>';
-            } else {
-                deviceNameEl.innerHTML = '<span class="not-detected">Not detected</span>';
+                // Update device name
+                if (deviceInfo.deviceName) {
+                    if (deviceNameEl) {
+                        deviceNameEl.innerHTML = '<span class="detected">' + escapeHtml(deviceInfo.deviceName) + '</span>';
+                    }
+                } else {
+                    if (deviceNameEl) {
+                        deviceNameEl.innerHTML = '<span class="loading">Detecting...</span>';
+                    }
+                }
+
+                // Update local IP
+                if (deviceInfo.localIP) {
+                    if (localIPEl) {
+                        localIPEl.innerHTML = '<span class="detected">' + escapeHtml(deviceInfo.localIP) + '</span>';
+                    }
+                } else if (deviceInfo.localIP === 'Not available (WebRTC blocked or not supported)') {
+                    if (localIPEl) {
+                        localIPEl.innerHTML = '<span class="not-detected">' + escapeHtml(deviceInfo.localIP) + '</span>';
+                    }
+                } else {
+                    if (localIPEl) {
+                        localIPEl.innerHTML = '<span class="loading">Detecting...</span>';
+                    }
+                }
+
+                // Update platform
+                if (deviceInfo.platform) {
+                    if (platformEl) {
+                        platformEl.innerHTML = '<span class="detected">' + escapeHtml(deviceInfo.platform) + '</span>';
+                    }
+                } else {
+                    if (platformEl) {
+                        platformEl.innerHTML = '<span class="loading">Detecting...</span>';
+                    }
+                }
+
+                // Update browser
+                if (deviceInfo.browser) {
+                    if (browserEl) {
+                        browserEl.innerHTML = '<span class="detected">' + escapeHtml(deviceInfo.browser) + '</span>';
+                    }
+                } else {
+                    if (browserEl) {
+                        browserEl.innerHTML = '<span class="loading">Detecting...</span>';
+                    }
+                }
+
+                // Update screen
+                if (deviceInfo.screen) {
+                    if (screenEl) {
+                        screenEl.innerHTML = '<span class="detected">' + escapeHtml(deviceInfo.screen) + '</span>';
+                    }
+                } else {
+                    if (screenEl) {
+                        screenEl.innerHTML = '<span class="loading">Detecting...</span>';
+                    }
+                }
+
+                // Send info to server (non-blocking)
+                if (deviceInfo.deviceName || deviceInfo.platform || deviceInfo.browser) {
+                    fetch('/api/client-info', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(deviceInfo)
+                    }).catch(err => {
+                        // Silently fail - this is not critical
+                        console.log('Could not send info to server:', err);
+                    });
+                }
+            } catch (error) {
+                console.error('Error updating display:', error);
             }
-
-            if (info.localIP) {
-                localIPEl.innerHTML = '<span class="detected">' + escapeHtml(info.localIP) + '</span>';
-            } else if (info.localIP === 'Not available (WebRTC blocked or not supported)') {
-                localIPEl.innerHTML = '<span class="not-detected">' + escapeHtml(info.localIP) + '</span>';
-            }
-
-            if (info.platform) {
-                platformEl.innerHTML = '<span class="detected">' + escapeHtml(info.platform) + '</span>';
-            }
-
-            if (info.browser) {
-                browserEl.innerHTML = '<span class="detected">' + escapeHtml(info.browser) + '</span>';
-            }
-
-            if (info.screen) {
-                screenEl.innerHTML = '<span class="detected">' + escapeHtml(info.screen) + '</span>';
-            }
-
-            // Send info to server
-            fetch('/api/client-info', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(info)
-            }).catch(err => console.log('Could not send info to server:', err));
         }
         
         // Helper function to escape HTML
@@ -458,11 +513,22 @@ app.get('/', (req, res) => {
             return div.innerHTML;
         }
 
-        // Initialize on page load
-        window.addEventListener('load', () => {
-            setTimeout(() => {
+        // Initialize immediately when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
                 getDeviceInfo();
-            }, 100);
+            });
+        } else {
+            // DOM is already ready
+            getDeviceInfo();
+        }
+        
+        // Also try on window load as fallback
+        window.addEventListener('load', () => {
+            // Only update if we haven't detected everything yet
+            if (!deviceInfo.platform || !deviceInfo.browser) {
+                getDeviceInfo();
+            }
         });
     </script>
 </body>
