@@ -8,13 +8,21 @@ const PORT = process.env.PORT || 3000;
  * @returns {string|null} The LAN IP address or null if not found
  */
 function getLocalIPAddress() {
+  // On Vercel/serverless, network interfaces may not be meaningful
+  if (process.env.VERCEL) {
+    return 'N/A (Serverless Environment)';
+  }
+  
   const interfaces = os.networkInterfaces();
   
   for (const interfaceName in interfaces) {
     const addresses = interfaces[interfaceName];
     
     for (const address of addresses) {
-      if (address.family === 'IPv4' && !address.internal) {
+      // Skip internal, loopback, and link-local addresses
+      if (address.family === 'IPv4' && 
+          !address.internal && 
+          !address.address.startsWith('169.254.')) {
         return address.address;
       }
     }
@@ -24,12 +32,44 @@ function getLocalIPAddress() {
 }
 
 /**
+ * Get server device name (handles Vercel/serverless environments)
+ * @returns {string} The device name or server identifier
+ */
+function getServerDeviceName() {
+  // On Vercel, use environment variable or a friendly name
+  if (process.env.VERCEL) {
+    return process.env.VERCEL_URL ? 
+           `Vercel Server (${process.env.VERCEL_URL.replace('https://', '').replace('.vercel.app', '')})` : 
+           'Vercel Serverless Function';
+  }
+  
+  const hostname = os.hostname();
+  
+  // If hostname is an IP address (common in containers/serverless), use a fallback
+  const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+  if (ipPattern.test(hostname)) {
+    return `Server (${hostname})`;
+  }
+  
+  return hostname;
+}
+
+/**
  * Get client IP address from request
- * Handles proxies and load balancers
+ * Handles proxies and load balancers (especially Vercel)
  */
 function getClientIP(req) {
-  return req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-         req.headers['x-real-ip'] ||
+  // Vercel uses x-forwarded-for header
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    // x-forwarded-for can contain multiple IPs, get the first one (client's real IP)
+    const ips = forwarded.split(',').map(ip => ip.trim());
+    return ips[0] || 'Unknown';
+  }
+  
+  // Fallback to other headers
+  return req.headers['x-real-ip'] ||
+         req.headers['cf-connecting-ip'] || // Cloudflare
          req.connection?.remoteAddress ||
          req.socket?.remoteAddress ||
          req.ip ||
@@ -44,14 +84,28 @@ function getUserAgentInfo(req) {
   return userAgent;
 }
 
+/**
+ * Escape HTML to prevent XSS attacks (server-side)
+ */
+function escapeHtml(text) {
+  if (typeof text !== 'string') {
+    text = String(text);
+  }
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 // Serve static HTML page
 app.get('/', (req, res) => {
   const serverInfo = {
-    deviceName: os.hostname(),
+    deviceName: getServerDeviceName(),
     lanIP: getLocalIPAddress(),
     platform: os.platform(),
-    arch: os.arch(),
-    networkInterfaces: os.networkInterfaces()
+    arch: os.arch()
   };
 
   const clientInfo = {
@@ -176,19 +230,19 @@ app.get('/', (req, res) => {
             <h2>Server Information</h2>
             <div class="info-item">
                 <span class="label">Device Name:</span>
-                <span class="value">${serverInfo.deviceName}</span>
+                <span class="value">${escapeHtml(serverInfo.deviceName || 'Unknown')}</span>
             </div>
             <div class="info-item">
                 <span class="label">LAN IP Address:</span>
-                <span class="value">${serverInfo.lanIP || 'Not found'}</span>
+                <span class="value">${escapeHtml(serverInfo.lanIP || 'Not found')}</span>
             </div>
             <div class="info-item">
                 <span class="label">Platform:</span>
-                <span class="value">${serverInfo.platform}</span>
+                <span class="value">${escapeHtml(serverInfo.platform || 'Unknown')}</span>
             </div>
             <div class="info-item">
                 <span class="label">Architecture:</span>
-                <span class="value">${serverInfo.arch}</span>
+                <span class="value">${escapeHtml(serverInfo.arch || 'Unknown')}</span>
             </div>
         </div>
 
@@ -196,7 +250,7 @@ app.get('/', (req, res) => {
             <h2>Your Information (Client)</h2>
             <div class="info-item">
                 <span class="label">Your Public IP Address:</span>
-                <span class="value">${clientInfo.ip}</span>
+                <span class="value">${escapeHtml(clientInfo.ip || 'Unknown')}</span>
             </div>
             <div class="info-item">
                 <span class="label">Device Name:</span>
@@ -220,7 +274,7 @@ app.get('/', (req, res) => {
             </div>
             <div class="info-item">
                 <span class="label">User Agent:</span>
-                <span class="value">${clientInfo.userAgent}</span>
+                <span class="value">${escapeHtml(clientInfo.userAgent || 'Unknown')}</span>
             </div>
         </div>
 
@@ -475,7 +529,7 @@ app.get('/', (req, res) => {
 // API endpoint for JSON response
 app.get('/api', (req, res) => {
   const serverInfo = {
-    deviceName: os.hostname(),
+    deviceName: getServerDeviceName(),
     lanIP: getLocalIPAddress(),
     platform: os.platform(),
     arch: os.arch()
