@@ -8,21 +8,13 @@ const PORT = process.env.PORT || 3000;
  * @returns {string|null} The LAN IP address or null if not found
  */
 function getLocalIPAddress() {
-  // On Vercel/serverless, network interfaces may not be meaningful
-  if (process.env.VERCEL) {
-    return 'N/A (Serverless Environment)';
-  }
-  
   const interfaces = os.networkInterfaces();
   
   for (const interfaceName in interfaces) {
     const addresses = interfaces[interfaceName];
     
     for (const address of addresses) {
-      // Skip internal, loopback, and link-local addresses
-      if (address.family === 'IPv4' && 
-          !address.internal && 
-          !address.address.startsWith('169.254.')) {
+      if (address.family === 'IPv4' && !address.internal) {
         return address.address;
       }
     }
@@ -32,44 +24,12 @@ function getLocalIPAddress() {
 }
 
 /**
- * Get server device name (handles Vercel/serverless environments)
- * @returns {string} The device name or server identifier
- */
-function getServerDeviceName() {
-  // On Vercel, use environment variable or a friendly name
-  if (process.env.VERCEL) {
-    return process.env.VERCEL_URL ? 
-           `Vercel Server (${process.env.VERCEL_URL.replace('https://', '').replace('.vercel.app', '')})` : 
-           'Vercel Serverless Function';
-  }
-  
-  const hostname = os.hostname();
-  
-  // If hostname is an IP address (common in containers/serverless), use a fallback
-  const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
-  if (ipPattern.test(hostname)) {
-    return `Server (${hostname})`;
-  }
-  
-  return hostname;
-}
-
-/**
  * Get client IP address from request
- * Handles proxies and load balancers (especially Vercel)
+ * Handles proxies and load balancers
  */
 function getClientIP(req) {
-  // Vercel uses x-forwarded-for header
-  const forwarded = req.headers['x-forwarded-for'];
-  if (forwarded) {
-    // x-forwarded-for can contain multiple IPs, get the first one (client's real IP)
-    const ips = forwarded.split(',').map(ip => ip.trim());
-    return ips[0] || 'Unknown';
-  }
-  
-  // Fallback to other headers
-  return req.headers['x-real-ip'] ||
-         req.headers['cf-connecting-ip'] || // Cloudflare
+  return req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+         req.headers['x-real-ip'] ||
          req.connection?.remoteAddress ||
          req.socket?.remoteAddress ||
          req.ip ||
@@ -84,28 +44,14 @@ function getUserAgentInfo(req) {
   return userAgent;
 }
 
-/**
- * Escape HTML to prevent XSS attacks (server-side)
- */
-function escapeHtml(text) {
-  if (typeof text !== 'string') {
-    text = String(text);
-  }
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
 // Serve static HTML page
 app.get('/', (req, res) => {
   const serverInfo = {
-    deviceName: getServerDeviceName(),
+    deviceName: os.hostname(),
     lanIP: getLocalIPAddress(),
     platform: os.platform(),
-    arch: os.arch()
+    arch: os.arch(),
+    networkInterfaces: os.networkInterfaces()
   };
 
   const clientInfo = {
@@ -230,19 +176,19 @@ app.get('/', (req, res) => {
             <h2>Server Information</h2>
             <div class="info-item">
                 <span class="label">Device Name:</span>
-                <span class="value" id="serverDeviceName"><span class="loading">Detecting...</span></span>
+                <span class="value">${serverInfo.deviceName}</span>
             </div>
             <div class="info-item">
                 <span class="label">LAN IP Address:</span>
-                <span class="value" id="serverLanIP"><span class="loading">Detecting...</span></span>
+                <span class="value">${serverInfo.lanIP || 'Not found'}</span>
             </div>
             <div class="info-item">
                 <span class="label">Platform:</span>
-                <span class="value" id="serverPlatform"><span class="loading">Detecting...</span></span>
+                <span class="value">${serverInfo.platform}</span>
             </div>
             <div class="info-item">
                 <span class="label">Architecture:</span>
-                <span class="value" id="serverArch"><span class="loading">Detecting...</span></span>
+                <span class="value">${serverInfo.arch}</span>
             </div>
         </div>
 
@@ -250,7 +196,7 @@ app.get('/', (req, res) => {
             <h2>Your Information (Client)</h2>
             <div class="info-item">
                 <span class="label">Your Public IP Address:</span>
-                <span class="value">${escapeHtml(clientInfo.ip || 'Unknown')}</span>
+                <span class="value">${clientInfo.ip}</span>
             </div>
             <div class="info-item">
                 <span class="label">Device Name:</span>
@@ -274,7 +220,7 @@ app.get('/', (req, res) => {
             </div>
             <div class="info-item">
                 <span class="label">User Agent:</span>
-                <span class="value">${escapeHtml(clientInfo.userAgent || 'Unknown')}</span>
+                <span class="value">${clientInfo.userAgent}</span>
             </div>
         </div>
 
@@ -293,12 +239,7 @@ app.get('/', (req, res) => {
                 language: navigator.language,
                 timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                 cpuCores: navigator.hardwareConcurrency || 'Unknown',
-                memory: navigator.deviceMemory ? navigator.deviceMemory + ' GB' : 'Unknown',
-                // Server info (client's local machine)
-                serverDeviceName: null,
-                serverLanIP: null,
-                serverPlatform: navigator.platform || 'Unknown',
-                serverArch: detectArchitecture()
+                memory: navigator.deviceMemory ? navigator.deviceMemory + ' GB' : 'Unknown'
             };
 
             // Try to infer device name from available information
@@ -325,23 +266,17 @@ app.get('/', (req, res) => {
             }
             
             info.deviceName = deviceName;
-            info.serverDeviceName = deviceName; // Initially same, will try to get hostname
             
             // Display device name immediately (before async operations)
             updateDisplay(info);
-            updateServerDisplay(info);
 
             // Try to get local IP using WebRTC
             getLocalIPAddress().then(ip => {
                 info.localIP = ip;
-                info.serverLanIP = ip; // Use same IP for server section
                 updateDisplay(info);
-                updateServerDisplay(info);
             }).catch(() => {
                 info.localIP = 'Not available (WebRTC blocked or not supported)';
-                info.serverLanIP = 'Not available (WebRTC blocked or not supported)';
                 updateDisplay(info);
-                updateServerDisplay(info);
             });
 
             // Try to get hostname from WebRTC or other methods
@@ -349,28 +284,11 @@ app.get('/', (req, res) => {
                 if (hostname) {
                     // If we got a real hostname, use it
                     info.deviceName = hostname;
-                    info.serverDeviceName = hostname;
                     updateDisplay(info);
-                    updateServerDisplay(info);
                 }
             });
 
             return info;
-        }
-        
-        // Detect system architecture
-        function detectArchitecture() {
-            const ua = navigator.userAgent;
-            if (ua.includes('x86_64') || ua.includes('x64') || ua.includes('Win64') || ua.includes('WOW64')) {
-                return 'x64';
-            } else if (ua.includes('x86') || ua.includes('Win32')) {
-                return 'x86';
-            } else if (ua.includes('ARM')) {
-                return 'arm';
-            } else if (navigator.platform.includes('Mac')) {
-                return 'x64'; // Most modern Macs are x64
-            }
-            return 'x64'; // Default assumption
         }
 
         // Get browser information
@@ -450,64 +368,47 @@ app.get('/', (req, res) => {
 
         // Try to get hostname (limited by browser security)
         async function tryGetHostname() {
-            // Method 1: Try WebRTC to get hostname from ICE candidates
+            // Try to get hostname from WebRTC (rarely works due to browser security)
             try {
                 const RTCPeerConnection = window.RTCPeerConnection || 
                                          window.mozRTCPeerConnection || 
                                          window.webkitRTCPeerConnection;
                 
                 if (RTCPeerConnection) {
-                    const pc = new RTCPeerConnection({ 
-                        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] 
-                    });
+                    const pc = new RTCPeerConnection({ iceServers: [] });
                     return new Promise((resolve) => {
-                        let hostnameFound = null;
                         pc.onicecandidate = (event) => {
                             if (event.candidate) {
+                                // Sometimes hostname appears in candidate
                                 const candidate = event.candidate.candidate;
-                                // Look for hostname patterns in various formats
-                                const patterns = [
-                                    /host ([a-zA-Z0-9.-]+)/,
-                                    /hostname ([a-zA-Z0-9.-]+)/,
-                                    /([A-Z][A-Z0-9-]+(?:-[A-Z0-9]+)*)/  // Pattern like DESKTOP-3DVN5FM
-                                ];
-                                
-                                for (const pattern of patterns) {
-                                    const match = candidate.match(pattern);
-                                    if (match && match[1]) {
-                                        const potentialHostname = match[1];
-                                        // Validate it looks like a hostname (not an IP)
-                                        if (!/^\d+\.\d+\.\d+\.\d+$/.test(potentialHostname) && 
-                                            potentialHostname.length > 3) {
-                                            hostnameFound = potentialHostname;
-                                            break;
-                                        }
-                                    }
+                                // Look for hostname patterns (rare)
+                                const hostnameMatch = candidate.match(/host ([a-zA-Z0-9.-]+)/);
+                                if (hostnameMatch) {
+                                    pc.close();
+                                    resolve(hostnameMatch[1]);
+                                    return;
                                 }
                             } else {
-                                // All candidates collected
                                 pc.close();
-                                resolve(hostnameFound);
+                                resolve(null);
                             }
                         };
                         pc.createDataChannel('');
                         pc.createOffer().then(offer => pc.setLocalDescription(offer));
                         setTimeout(() => {
                             pc.close();
-                            resolve(hostnameFound);
-                        }, 2000);
+                            resolve(null);
+                        }, 1000);
                     });
                 }
             } catch (e) {
                 console.log('WebRTC hostname detection failed:', e);
             }
             
-            // Method 2: Try to infer from available info (fallback)
-            // Note: Browsers cannot directly access computer hostname for security reasons
             return null;
         }
 
-        // Update the display with detected information (Client section)
+        // Update the display with detected information
         function updateDisplay(info) {
             const deviceNameEl = document.getElementById('deviceName');
             const localIPEl = document.getElementById('localIP');
@@ -550,34 +451,6 @@ app.get('/', (req, res) => {
             }).catch(err => console.log('Could not send info to server:', err));
         }
         
-        // Update the Server Information section with client's local machine info
-        function updateServerDisplay(info) {
-            const serverDeviceNameEl = document.getElementById('serverDeviceName');
-            const serverLanIPEl = document.getElementById('serverLanIP');
-            const serverPlatformEl = document.getElementById('serverPlatform');
-            const serverArchEl = document.getElementById('serverArch');
-
-            if (info.serverDeviceName) {
-                serverDeviceNameEl.innerHTML = '<span class="detected">' + escapeHtml(info.serverDeviceName) + '</span>';
-            } else {
-                serverDeviceNameEl.innerHTML = '<span class="not-detected">Not detected</span>';
-            }
-
-            if (info.serverLanIP) {
-                serverLanIPEl.innerHTML = '<span class="detected">' + escapeHtml(info.serverLanIP) + '</span>';
-            } else if (info.serverLanIP === 'Not available (WebRTC blocked or not supported)') {
-                serverLanIPEl.innerHTML = '<span class="not-detected">' + escapeHtml(info.serverLanIP) + '</span>';
-            }
-
-            if (info.serverPlatform) {
-                serverPlatformEl.innerHTML = '<span class="detected">' + escapeHtml(info.serverPlatform) + '</span>';
-            }
-
-            if (info.serverArch) {
-                serverArchEl.innerHTML = '<span class="detected">' + escapeHtml(info.serverArch) + '</span>';
-            }
-        }
-        
         // Helper function to escape HTML
         function escapeHtml(text) {
             const div = document.createElement('div');
@@ -602,7 +475,7 @@ app.get('/', (req, res) => {
 // API endpoint for JSON response
 app.get('/api', (req, res) => {
   const serverInfo = {
-    deviceName: getServerDeviceName(),
+    deviceName: os.hostname(),
     lanIP: getLocalIPAddress(),
     platform: os.platform(),
     arch: os.arch()
