@@ -3,6 +3,17 @@ const os = require('os');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Enable CORS for local server connection
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 /**
  * Get the LAN IP address of the server
  * @returns {string|null} The LAN IP address or null if not found
@@ -51,12 +62,18 @@ app.get('/', (req, res) => {
   const serverDeviceName = process.env.DEVICE_NAME || os.hostname() || 'Unknown Server';
   const serverLanIP = getLocalIPAddress();
   
+  // Get local server URL from environment or use default
+  const localServerUrl = process.env.LOCAL_SERVER_URL || 'http://192.168.61.55:3000';
+  const isLocalServer = req.hostname === 'localhost' || req.hostname === '127.0.0.1' || req.hostname.includes('192.168');
+  
   const serverInfo = {
     deviceName: serverDeviceName,
     lanIP: serverLanIP,
     platform: os.platform(),
     arch: os.arch(),
-    networkInterfaces: os.networkInterfaces()
+    networkInterfaces: os.networkInterfaces(),
+    localServerUrl: localServerUrl,
+    isLocalServer: isLocalServer
   };
 
   const clientInfo = {
@@ -197,8 +214,14 @@ app.get('/', (req, res) => {
             </div>
             <div class="note" style="margin-top: 15px;">
                 <strong>ℹ️ Note:</strong> This is the server's device name. 
-                ${process.env.DEVICE_NAME ? 'Custom device name from environment variable.' : 'On local: your computer name. On live: set DEVICE_NAME in Vercel to show your local device name.'}
+                ${serverInfo.isLocalServer ? 'Running on local server.' : 'Live server. Connecting to local server for device info...'}
             </div>
+            ${!serverInfo.isLocalServer ? `
+            <div id="localServerStatus" style="margin-top: 10px; padding: 10px; background: #e7f3ff; border-radius: 5px; border-left: 4px solid #2196F3;">
+                <strong>🔗 Local Server Connection:</strong> 
+                <span id="localServerStatusText">Connecting to ${serverInfo.localServerUrl}...</span>
+            </div>
+            ` : ''}
         </div>
 
         <div class="section">
@@ -561,15 +584,77 @@ app.get('/', (req, res) => {
             return div.innerHTML;
         }
 
+        // Function to fetch data from local server (for live website)
+        async function fetchLocalServerData() {
+            const localServerUrl = '${serverInfo.localServerUrl || "http://192.168.61.55:3000"}';
+            const isLocalServer = ${serverInfo.isLocalServer ? 'true' : 'false'};
+            
+            // Only try to connect if we're on the live server
+            if (!isLocalServer) {
+                const statusEl = document.getElementById('localServerStatusText');
+                if (statusEl) {
+                    statusEl.innerHTML = 'Connecting to local server...';
+                }
+                
+                try {
+                    // Create timeout controller
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 5000);
+                    
+                    const response = await fetch(localServerUrl + '/api/local-device', {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    
+                    if (response.ok) {
+                        const localData = await response.json();
+                        
+                        // Update server device name with local server data
+                        const serverDeviceNameEl = document.querySelector('.section:first-of-type .info-item:first-of-type .value');
+                        if (serverDeviceNameEl && localData.deviceName) {
+                            serverDeviceNameEl.innerHTML = '<span style="color: #28a745; font-weight: 600;">' + escapeHtml(localData.deviceName) + '</span> <span style="color: #666; font-size: 0.9em;">(from local server)</span>';
+                        }
+                        
+                        // Update server LAN IP
+                        const serverLanIPEl = document.querySelector('.section:first-of-type .info-item:nth-of-type(2) .value');
+                        if (serverLanIPEl && localData.lanIP) {
+                            serverLanIPEl.innerHTML = escapeHtml(localData.lanIP) + ' <span style="color: #666; font-size: 0.9em;">(from local server)</span>';
+                        }
+                        
+                        if (statusEl) {
+                            statusEl.innerHTML = '<span style="color: #28a745;">✓ Connected to local server</span>';
+                        }
+                    } else {
+                        throw new Error('Failed to fetch');
+                    }
+                } catch (error) {
+                    console.log('Local server connection failed:', error);
+                    const statusEl = document.getElementById('localServerStatusText');
+                    if (statusEl) {
+                        statusEl.innerHTML = '<span style="color: #dc3545;">✗ Cannot connect to local server. Make sure it\'s running at ' + localServerUrl + '</span>';
+                    }
+                }
+            }
+        }
+        
         // Auto-initialize device detection immediately
         (function autoDetect() {
             // Try to run immediately if DOM is ready
             if (document.readyState === 'complete' || document.readyState === 'interactive') {
                 getDeviceInfo();
+                fetchLocalServerData();
             } 
             // Wait for DOM to be ready
             else if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', getDeviceInfo, { once: true });
+                document.addEventListener('DOMContentLoaded', () => {
+                    getDeviceInfo();
+                    fetchLocalServerData();
+                }, { once: true });
             }
             // Fallback: wait for window load
             window.addEventListener('load', () => {
@@ -577,6 +662,7 @@ app.get('/', (req, res) => {
                 if (!deviceInfo.platform || !deviceInfo.browser) {
                     getDeviceInfo();
                 }
+                fetchLocalServerData();
             }, { once: true });
         })();
     </script>
@@ -615,6 +701,21 @@ app.post('/api/client-info', express.json(), (req, res) => {
     received: req.body,
     timestamp: new Date().toISOString()
   });
+});
+
+// Endpoint to expose local server device info (for live website to fetch)
+app.get('/api/local-device', (req, res) => {
+  const localDeviceInfo = {
+    deviceName: process.env.DEVICE_NAME || os.hostname() || 'Unknown Server',
+    lanIP: getLocalIPAddress(),
+    platform: os.platform(),
+    arch: os.arch(),
+    networkInterfaces: Object.keys(os.networkInterfaces()),
+    timestamp: new Date().toISOString(),
+    isLocal: true
+  };
+  
+  res.json(localDeviceInfo);
 });
 
 // Export for Vercel
