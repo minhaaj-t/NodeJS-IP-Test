@@ -257,20 +257,56 @@ app.get('/', (req, res) => {
                 // Try to infer device name from available information
                 let deviceName = null;
                 
-                // Try to extract device model from user agent (for mobile devices)
+                // Method 1: Try to extract device model from user agent (for mobile devices)
                 const mobileMatch = ua.match(/(iPhone|iPad|iPod|Android|Windows Phone|BlackBerry)/i);
                 const modelMatch = ua.match(/(iPhone|iPad|iPod|Android|Windows Phone|BlackBerry)[^;]*/i);
                 
                 if (modelMatch) {
                     deviceName = modelMatch[0].trim();
-                } else if (platform) {
-                    // For desktop, use platform as device identifier
+                } 
+                // Method 2: Try to get more detailed device info from user agent
+                else if (ua.includes('Windows NT')) {
+                    const winVersion = ua.match(/Windows NT ([0-9.]+)/);
+                    if (winVersion) {
+                        const version = winVersion[1];
+                        let winName = 'Windows';
+                        if (version === '10.0') winName = 'Windows 10/11';
+                        else if (version === '6.3') winName = 'Windows 8.1';
+                        else if (version === '6.2') winName = 'Windows 8';
+                        else if (version === '6.1') winName = 'Windows 7';
+                        deviceName = winName + (cores ? ' (' + cores + ' cores)' : '');
+                    } else {
+                        deviceName = 'Windows' + (cores ? ' (' + cores + ' cores)' : '');
+                    }
+                }
+                // Method 3: Try Mac detection
+                else if (ua.includes('Mac OS X')) {
+                    const macVersion = ua.match(/Mac OS X ([0-9_]+)/);
+                    if (macVersion) {
+                        deviceName = 'macOS ' + macVersion[1].replace(/_/g, '.') + (cores ? ' (' + cores + ' cores)' : '');
+                    } else {
+                        deviceName = 'macOS' + (cores ? ' (' + cores + ' cores)' : '');
+                    }
+                }
+                // Method 4: Try Linux detection
+                else if (ua.includes('Linux')) {
+                    deviceName = 'Linux' + (cores ? ' (' + cores + ' cores)' : '');
+                }
+                // Method 5: Fallback to platform
+                else if (platform && platform !== 'Unknown') {
                     deviceName = platform + (cores ? ' (' + cores + ' cores)' : '');
-                } else {
-                    deviceName = 'Unknown Device';
+                } 
+                // Method 6: Last resort
+                else {
+                    deviceName = 'Device' + (cores ? ' (' + cores + ' cores)' : '');
                 }
                 
                 deviceInfo.deviceName = deviceName;
+                
+                // Log for debugging (only in development)
+                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                    console.log('Device detected:', deviceInfo);
+                }
                 
                 // Update display with synchronous data immediately
                 updateDisplay();
@@ -513,23 +549,24 @@ app.get('/', (req, res) => {
             return div.innerHTML;
         }
 
-        // Initialize immediately when DOM is ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => {
+        // Auto-initialize device detection immediately
+        (function autoDetect() {
+            // Try to run immediately if DOM is ready
+            if (document.readyState === 'complete' || document.readyState === 'interactive') {
                 getDeviceInfo();
-            });
-        } else {
-            // DOM is already ready
-            getDeviceInfo();
-        }
-        
-        // Also try on window load as fallback
-        window.addEventListener('load', () => {
-            // Only update if we haven't detected everything yet
-            if (!deviceInfo.platform || !deviceInfo.browser) {
-                getDeviceInfo();
+            } 
+            // Wait for DOM to be ready
+            else if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', getDeviceInfo, { once: true });
             }
-        });
+            // Fallback: wait for window load
+            window.addEventListener('load', () => {
+                // Only run if we haven't detected basic info yet
+                if (!deviceInfo.platform || !deviceInfo.browser) {
+                    getDeviceInfo();
+                }
+            }, { once: true });
+        })();
     </script>
 </body>
 </html>
